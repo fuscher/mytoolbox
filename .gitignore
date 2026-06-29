@@ -26,6 +26,7 @@ ENV/
 dist/
 build/
 *.spec
+resources/app_icon.ico
 
 # Environment variables
 .env
