@@ -18,6 +18,12 @@
 - 卸载后自动扫描残留文件
 - 打开应用安装目录
 
+### 🎨 界面美化
+- 深色主题，可切换浅色（`config.json` 中修改 `theme` 键）
+- 自定义设计令牌系统（颜色 / 字体 / 间距统一管理于 `gui/theme.py`）
+- 原创扳手图标 + 工具箱占位图标（`scripts/generate_icons.py` 纯 Python 生成，无版权风险）
+- 工具栏状态指示灯（颜色随运行状态变化）
+
 ## 技术栈
 
 - Python 3.9+
@@ -27,7 +33,7 @@
 
 **可选依赖（提升图标提取稳定性）：**
 - `pywin32` - 更稳定的图标提取
-- `psutil` - 卸载时终止相关进程
+- `watchdog` - 文件系统监控，自动检测新增安装包
 
 ## 快速开始
 
@@ -63,9 +69,13 @@ MyToolbox/
 │   ├── app.py             # 主窗口
 │   ├── install_tab.py     # 安装包管理 Tab
 │   ├── uninstaller_tab.py # 应用管理 Tab
+│   ├── theme.py           # 设计令牌 + ttk 主题引擎
 │   └── dialogs.py         # 对话框
+├── scripts/           # 辅助脚本
+│   └── generate_icons.py   # 图标生成器
 ├── resources/         # 资源文件
-│   └── default_icon.png
+│   ├── app_icon.png        # 窗口图标（扳手）
+│   └── default_icon.png    # 默认占位图标（工具箱）
 ├── tools/             # 安装包目录
 │   ├── _index.json        # 索引文件
 │   └── _categories.json   # 分类配置
@@ -83,7 +93,7 @@ MyToolbox/
 | default_icon | 默认图标路径 | resources/default_icon.png |
 | install_timeout_minutes | 安装超时时间（分钟） | 10 |
 | registry_poll_interval_seconds | 注册表轮询间隔（秒） | 2 |
-| theme | 主题 | default |
+| theme | 主题，可选 `dark`（默认）/ `light` | dark |
 
 ## 使用说明
 
