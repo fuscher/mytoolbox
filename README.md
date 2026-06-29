@@ -120,4 +120,8 @@ MyToolbox/
 
 ## 许可证
 
-MIT License
+本项目基于 [Apache License 2.0](LICENSE) 发布。
+
+```
+SPDX-License-Identifier: Apache-2.0
+```
