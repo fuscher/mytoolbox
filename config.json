@@ -1,0 +1,7 @@
+{
+  "tools_dir": "tools",
+  "default_icon": "resources/default_icon.png",
+  "install_timeout_minutes": 10,
+  "registry_poll_interval_seconds": 2,
+  "theme": "default"
+}
