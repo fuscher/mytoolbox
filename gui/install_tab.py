@@ -10,7 +10,7 @@ import json
 import os
 import tkinter as tk
 from pathlib import Path
-from tkinter import ttk, messagebox
+from tkinter import ttk
 from typing import Callable, Dict, List, Optional, Set
 
 from core.scanner import scan_tools
@@ -22,6 +22,7 @@ from core.icon_extractor import IconExtractor
 from core import get_app_root
 from .dialogs import CategoryManageDialog, _BatchCategorizeDialog
 from .theme import Theme, themed_listbox, themed_canvas
+from .dialogs import themed_confirm, themed_warning, themed_info
 
 
 CARD_W = 200        # fallback / default card width
@@ -644,12 +645,12 @@ class InstallTab(ttk.Frame):
             self._rebuild_from_index()
 
     def _show_import_dialog(self, new_files: List[tuple]) -> None:
-        result = messagebox.askyesno(
-            "发现新安装包",
+        result = themed_confirm(
+            self, "发现新安装包",
             f"检测到 {len(new_files)} 个新安装包，是否导入？\n\n"
             + "\n".join(f"  - {f[0].name}" for f in new_files[:5])
             + ("\n  ..." if len(new_files) > 5 else ""),
-            parent=self,
+            self.t, icon="info",
         )
         if result:
             self._import_files(new_files)
@@ -710,7 +711,8 @@ class InstallTab(ttk.Frame):
             src_path = Path(file_path)
             ext = src_path.suffix.lower()
             if ext not in _INSTALLER_EXTENSIONS:
-                messagebox.showwarning("不支持的文件类型", f"{src_path.name} 不是支持的安装包格式")
+                themed_warning(self, "不支持的文件类型",
+                               f"{src_path.name} 不是支持的安装包格式", self.t)
                 continue
             dest_path = tools_dir / src_path.name
             counter = 1
@@ -851,10 +853,10 @@ class InstallTab(ttk.Frame):
                 if file_path.exists():
                     all_file_paths.append(file_path)
         if running_tools:
-            result = messagebox.askyesno(
-                "确认删除",
+            result = themed_confirm(
+                self, "确认删除",
                 f"以下工具正在运行中，确定要删除吗？\n\n" + "\n".join(f"  - {name}" for name in running_tools),
-                parent=self,
+                self.t, icon="danger",
             )
             if not result:
                 return
@@ -864,7 +866,7 @@ class InstallTab(ttk.Frame):
             if len(all_file_paths) > 10:
                 file_list += f"\n  ... 等共 {len(all_file_paths)} 个文件"
             msg += "\n\n将删除以下文件：\n" + file_list
-        result = messagebox.askyesno("确认删除", msg, parent=self)
+        result = themed_confirm(self, "确认删除", msg, self.t, icon="danger")
         if not result:
             return
         for key in list(self._selected_tools):
@@ -893,7 +895,9 @@ class InstallTab(ttk.Frame):
                     pass
             manager.delete_tool(tool_id)
         self._selected_tools.clear()
+        self._selected_tool_key = None
         self.refresh()
+        self._show_empty_inspector()
         self._set_status(f"已删除 {len(selected_tool_names)} 个工具")
 
     def _batch_categorize(self) -> None:
@@ -924,10 +928,10 @@ class InstallTab(ttk.Frame):
             return
         installed = is_installed(key, self.config)
         if installed:
-            result = messagebox.askyesno(
-                "确认移除",
+            result = themed_confirm(
+                self, "确认移除",
                 f"该工具 {tool.get('name', '')} 正在运行中，确定要移除吗？",
-                parent=self,
+                self.t, icon="danger",
             )
             if not result:
                 return
@@ -942,7 +946,7 @@ class InstallTab(ttk.Frame):
         msg = f"确定要移除「{tool.get('name', '')}」吗？"
         if file_paths:
             msg += "\n\n将删除以下文件：\n" + "\n".join(f"  - {p.name}" for p in file_paths)
-        result = messagebox.askyesno("确认移除", msg, parent=self)
+        result = themed_confirm(self, "确认移除", msg, self.t, icon="danger")
         if not result:
             return
         for file_path in file_paths:
@@ -959,7 +963,9 @@ class InstallTab(ttk.Frame):
                 pass
         manager.delete_tool(tool_id)
         self._selected_tools.discard(key)
+        self._selected_tool_key = None
         self.refresh()
+        self._show_empty_inspector()
         self._set_status(f"已移除: {tool.get('name', '')}")
 
     # ── Category list ─────────────────────────────────────────────────────

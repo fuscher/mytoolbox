@@ -234,8 +234,139 @@ def _collect_memory() -> MemoryInfo:
     return mem
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# DXGI (DirectX Graphics Infrastructure) — accurate VRAM query
+# ═══════════════════════════════════════════════════════════════════════════
+
+# IID_IDXGIFactory = {7B7166EC-21C7-44AE-B21A-C9AE321AE369}
+# Packed as a standard COM GUID: Data1(LE u32) Data2(LE u16) Data3(LE u16) Data4(raw)
+import struct as _struct
+_IID_IDXGIFactory_bytes = bytearray(16)
+_struct.pack_into("<I", _IID_IDXGIFactory_bytes, 0, 0x7B7166EC)
+_struct.pack_into("<H", _IID_IDXGIFactory_bytes, 4, 0x21C7)
+_struct.pack_into("<H", _IID_IDXGIFactory_bytes, 6, 0x44AE)
+_IID_IDXGIFactory_bytes[8:16] = bytes(
+    [0xB2, 0x1A, 0xC9, 0xAE, 0x32, 0x1A, 0xE3, 0x69])
+_IID_IDXGIFactory = (ctypes.c_ubyte * 16).from_buffer_copy(_IID_IDXGIFactory_bytes)
+del _struct, _IID_IDXGIFactory_bytes
+
+
+class _DXGI_ADAPTER_DESC(ctypes.Structure):
+    """DXGI_ADAPTER_DESC (v1.0) — adapter description with dedicated-video-memory."""
+    _fields_ = [
+        ("Description",            ctypes.c_wchar * 128),
+        ("VendorId",               ctypes.c_uint),
+        ("DeviceId",               ctypes.c_uint),
+        ("SubSysId",               ctypes.c_uint),
+        ("Revision",               ctypes.c_uint),
+        ("DedicatedVideoMemory",   ctypes.c_size_t),
+        ("DedicatedSystemMemory",  ctypes.c_size_t),
+        ("SharedSystemMemory",     ctypes.c_size_t),
+        ("AdapterLuid",            ctypes.c_longlong),
+    ]
+
+
+# COM vtable helpers
+_Release_t = ctypes.WINFUNCTYPE(ctypes.c_ulong, ctypes.c_void_p)
+
+# IDXGIFactory::EnumAdapters(UINT Adapter, IDXGIAdapter **ppAdapter) — vtable[7]
+_EnumAdapters_t = ctypes.WINFUNCTYPE(
+    ctypes.c_long, ctypes.c_void_p, ctypes.c_uint,
+    ctypes.POINTER(ctypes.c_void_p))
+
+# IDXGIAdapter::GetDesc(DXGI_ADAPTER_DESC *pDesc) — vtable[8]
+_GetDesc_t = ctypes.WINFUNCTYPE(
+    ctypes.c_long, ctypes.c_void_p,
+    ctypes.POINTER(_DXGI_ADAPTER_DESC))
+
+_dxgi = None
+_CreateDXGIFactory = None
+try:
+    _dxgi = ctypes.windll.dxgi
+    _CreateDXGIFactory = _dxgi.CreateDXGIFactory
+    _CreateDXGIFactory.argtypes = [
+        ctypes.POINTER(ctypes.c_ubyte * 16), ctypes.POINTER(ctypes.c_void_p)]
+    _CreateDXGIFactory.restype = ctypes.c_long
+except (AttributeError, OSError):
+    pass  # dxgi.dll unavailable — callers fall back to WMI
+
+
+def _get_vram_via_dxgi() -> List[dict]:
+    """Enumerate GPUs via DXGI for accurate ``DedicatedVideoMemory``.
+
+    Returns a list of ``{"name": str, "vram_bytes": int}`` dicts.
+    Returns an empty list on any failure (caller falls back to WMI).
+    """
+    results: List[dict] = []
+    if _CreateDXGIFactory is None:
+        return results
+
+    factory_ptr = ctypes.c_void_p()
+    hr = _CreateDXGIFactory(ctypes.byref(_IID_IDXGIFactory),
+                            ctypes.byref(factory_ptr))
+    if hr < 0 or not factory_ptr:
+        return results
+
+    try:
+        # Navigate COM vtable: *factory_ptr → vtable → function pointers
+        factory_vtbl = ctypes.cast(factory_ptr,
+                                   ctypes.POINTER(ctypes.c_void_p))
+        factory_vtbl = ctypes.cast(factory_vtbl.contents.value,
+                                   ctypes.POINTER(ctypes.c_void_p))
+
+        p_enum = ctypes.cast(factory_vtbl[7], ctypes.c_void_p)
+        enum_adapters = _EnumAdapters_t(p_enum.value)
+
+        p_release_factory = ctypes.cast(factory_vtbl[2], ctypes.c_void_p)
+        release_factory = _Release_t(p_release_factory.value)
+
+        adapter_idx = 0
+        while True:
+            adapter_ptr = ctypes.c_void_p()
+            hr2 = enum_adapters(factory_ptr, adapter_idx,
+                                ctypes.byref(adapter_ptr))
+            if hr2 < 0 or not adapter_ptr:
+                break  # no more adapters
+
+            try:
+                adapter_vtbl = ctypes.cast(adapter_ptr,
+                                           ctypes.POINTER(ctypes.c_void_p))
+                adapter_vtbl = ctypes.cast(adapter_vtbl.contents.value,
+                                           ctypes.POINTER(ctypes.c_void_p))
+
+                p_get_desc = ctypes.cast(adapter_vtbl[8], ctypes.c_void_p)
+                get_desc = _GetDesc_t(p_get_desc.value)
+
+                p_release_adapter = ctypes.cast(adapter_vtbl[2],
+                                                ctypes.c_void_p)
+                release_adapter = _Release_t(p_release_adapter.value)
+
+                desc = _DXGI_ADAPTER_DESC()
+                hr3 = get_desc(adapter_ptr, ctypes.byref(desc))
+                if hr3 >= 0 and desc.Description:
+                    results.append({
+                        "name": desc.Description,
+                        "vram_bytes": desc.DedicatedVideoMemory,
+                    })
+            finally:
+                if adapter_ptr:
+                    release_adapter(adapter_ptr)
+
+            adapter_idx += 1
+    finally:
+        if factory_ptr:
+            release_factory(factory_ptr)
+
+    return results
+
+
 def _collect_gpus() -> List[GpuInfo]:
     gpus = []
+
+    # 1. Try DXGI for accurate VRAM (fall back to WMI AdapterRAM on failure)
+    dxgi_gpus: List[dict] = _get_vram_via_dxgi()
+
+    # 2. Always run WMI to get name + driver version
     out = _run_wmic("Win32_VideoController",
                     "Name,AdapterRAM,DriverVersion", use_path=True)
     rows = _parse_wmic_table(out)
@@ -244,7 +375,24 @@ def _collect_gpus() -> List[GpuInfo]:
         gpu.name = r.get("Name", "")
         gpu.driver_version = r.get("DriverVersion", "")
         vram_bytes = _int_or(r.get("AdapterRAM"), 0)
-        gpu.vram_mb = round(vram_bytes / (1024 * 1024)) if vram_bytes > 0 else 0
+
+        # Try to match against DXGI data for accurate VRAM
+        matched_dxgi_vram = None
+        wmi_name_lower = gpu.name.lower()
+        for dx in dxgi_gpus:
+            dx_name_lower = dx["name"].lower()
+            # Fuzzy match: one name is a substring of the other
+            if dx_name_lower in wmi_name_lower or wmi_name_lower in dx_name_lower:
+                matched_dxgi_vram = dx["vram_bytes"]
+                break
+
+        if matched_dxgi_vram is not None:
+            gpu.vram_mb = round(matched_dxgi_vram / (1024 * 1024))
+        elif vram_bytes > 0:
+            gpu.vram_mb = round(vram_bytes / (1024 * 1024))
+        else:
+            gpu.vram_mb = 0
+
         if gpu.name:
             gpus.append(gpu)
     return gpus

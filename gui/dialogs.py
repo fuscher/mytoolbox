@@ -10,7 +10,7 @@ import os
 import shutil
 import tkinter as tk
 from pathlib import Path
-from tkinter import filedialog, ttk, messagebox
+from tkinter import filedialog, ttk
 from typing import Dict, List, Optional
 
 from core.scanner import scan_tools
@@ -181,11 +181,11 @@ class AddToolDialog(tk.Toplevel):
     def _on_confirm(self) -> None:
         files = getattr(self, "_selected_files", [])
         if not files:
-            messagebox.showwarning("提示", "请选择至少一个安装包文件。", parent=self)
+            themed_warning(self, "提示", "请选择至少一个安装包文件。", self.t)
             return
         name = self._name_var.get().strip()
         if not name:
-            messagebox.showwarning("提示", "请输入工具名称。", parent=self)
+            themed_warning(self, "提示", "请输入工具名称。", self.t)
             return
         cat_idx = self._cat_combo.current()
         cat_codes = list(self._categories.keys())
@@ -402,7 +402,7 @@ class CategoryManageDialog(tk.Toplevel):
     def _on_edit(self) -> None:
         code = self._get_selected_code()
         if not code:
-            messagebox.showwarning("提示", "请选择一个可编辑的分类", parent=self)
+            themed_warning(self, "提示", "请选择一个可编辑的分类", self.t)
             return
         old_name = self._categories.get(code, "")
         dialog = _EditCategoryDialog(self, old_name, self.t)
@@ -415,14 +415,14 @@ class CategoryManageDialog(tk.Toplevel):
     def _on_delete(self) -> None:
         code = self._get_selected_code()
         if not code:
-            messagebox.showwarning("提示", "请选择一个可删除的分类", parent=self)
+            themed_warning(self, "提示", "请选择一个可删除的分类", self.t)
             return
         count = self._count_tools_in_category(code)
         if count > 0:
-            result = messagebox.askyesno(
-                "确认删除",
+            result = themed_confirm(
+                self, "确认删除",
                 f"该分类下有 {count} 个工具，删除后这些工具将不再属于任何分类，确定继续？",
-                parent=self,
+                self.t, icon="danger",
             )
             if not result:
                 return
@@ -486,3 +486,128 @@ class _EditCategoryDialog(tk.Toplevel):
         if name:
             self.result = name
         self.destroy()
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Themed confirmation / warning / info dialogs
+# ═══════════════════════════════════════════════════════════════════════════
+
+_ICONS = {
+    "warning": ("⚠", "warning"),   # ⚠
+    "danger":  ("✖", "danger"),    # ✖
+    "info":    ("ℹ", "accent"),    # ℹ
+}
+
+
+class ThemedConfirmDialog(tk.Toplevel):
+    """Themed modal dialog styled with the app's Theme colours.
+
+    Replaces ``tkinter.messagebox.askyesno`` so every dialog in the app
+    shares the same dark (or light) visual identity.
+    """
+
+    def __init__(self, parent: tk.Widget, title: str, message: str,
+                 theme: Theme, *, kind: str = "warning",
+                 confirm_text: str = "确定", cancel_text: str = "取消",
+                 show_cancel: bool = True):
+        super().__init__(parent)
+        self.t = theme
+        self.result: Optional[bool] = None
+        self._confirm_text = confirm_text
+
+        self.transient(parent)
+        self.title(title)
+        self.resizable(False, False)
+        self.grab_set()
+        self.configure(bg=theme.bg_root)
+
+        # ── Icon + Title row ────────────────────────────────────────
+        top = tk.Frame(self, bg=theme.bg_root)
+        top.pack(fill=tk.X, padx=theme.space_xl,
+                 pady=(theme.space_lg, theme.space_sm))
+
+        char, color_key = _ICONS.get(kind, _ICONS["warning"])
+        icon_color = getattr(theme, color_key, theme.warning)
+        tk.Label(top, text=char,
+                 bg=theme.bg_root, fg=icon_color,
+                 font=(theme.font_family, 20)).pack(side=tk.LEFT,
+                                                    padx=(0, theme.space_md))
+
+        tk.Label(top, text=title,
+                 bg=theme.bg_root, fg=theme.fg_primary,
+                 font=(theme.font_family, 10, "bold")).pack(
+            side=tk.LEFT, anchor=tk.W)
+
+        # ── Message ─────────────────────────────────────────────────
+        wrap = tk.Frame(self, bg=theme.bg_root)
+        wrap.pack(fill=tk.BOTH, expand=True,
+                  padx=theme.space_xl, pady=theme.space_sm)
+        tk.Label(wrap, text=message,
+                 bg=theme.bg_root, fg=theme.fg_secondary,
+                 font=(theme.font_family, 9),
+                 justify=tk.LEFT, wraplength=380).pack(anchor=tk.W)
+
+        # ── Separator ───────────────────────────────────────────────
+        tk.Frame(self, bg=theme.border, height=1).pack(
+            fill=tk.X, padx=theme.space_xl)
+
+        # ── Buttons ─────────────────────────────────────────────────
+        btn = tk.Frame(self, bg=theme.bg_root)
+        btn.pack(fill=tk.X, padx=theme.space_xl,
+                 pady=theme.space_md)
+
+        if show_cancel:
+            ttk.Button(btn, text=cancel_text, command=self._on_cancel).pack(
+                side=tk.RIGHT, padx=(theme.space_sm, 0))
+
+        confirm_style = "Danger.TButton" if kind == "danger" else "Accent.TButton"
+        ttk.Button(btn, text=confirm_text, style=confirm_style,
+                   command=self._on_confirm).pack(side=tk.RIGHT)
+
+        # ── Keyboard ────────────────────────────────────────────────
+        self.bind("<Escape>", lambda e: self._on_cancel())
+        self.bind("<Return>", lambda e: self._on_confirm())
+
+        self.protocol("WM_DELETE_WINDOW", self._on_cancel)
+
+        # Size & centre
+        self.update_idletasks()
+        w = max(self.winfo_reqwidth(), 420)
+        h = max(self.winfo_reqheight(), 170)
+        self.geometry(f"{w}x{h}")
+        center_dialog(self, parent)
+
+        # Focus the confirm button so Return works intuitively
+        self.focus_set()
+
+    def _on_confirm(self) -> None:
+        self.result = True
+        self.destroy()
+
+    def _on_cancel(self) -> None:
+        self.result = False
+        self.destroy()
+
+
+def themed_confirm(parent: tk.Widget, title: str, message: str,
+                   theme: Theme, *, icon: str = "warning") -> bool:
+    """Show a themed yes/no confirmation dialog.  Returns ``True`` when confirmed."""
+    dlg = ThemedConfirmDialog(parent, title, message, theme, kind=icon)
+    parent.wait_window(dlg)
+    return dlg.result is True
+
+
+def themed_warning(parent: tk.Widget, title: str, message: str,
+                   theme: Theme) -> None:
+    """Show a themed warning dialog (OK only)."""
+    dlg = ThemedConfirmDialog(parent, title, message, theme, kind="warning",
+                              confirm_text="确定", show_cancel=False)
+    parent.wait_window(dlg)
+
+
+def themed_info(parent: tk.Widget, title: str, message: str,
+                theme: Theme) -> None:
+    """Show a themed info dialog (OK only)."""
+    dlg = ThemedConfirmDialog(parent, title, message, theme, kind="info",
+                              confirm_text="确定", show_cancel=False)
+    parent.wait_window(dlg)

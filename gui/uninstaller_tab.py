@@ -11,12 +11,13 @@ import os
 import threading
 import tkinter as tk
 from pathlib import Path
-from tkinter import ttk, messagebox
+from tkinter import ttk
 from typing import Callable, Dict, List, Optional
 
 from core.app_manager import InstalledApp, scan_installed_apps, scan_installed_apps_async, uninstall_app, open_install_location, get_app_icon_path, UninstallerType
 from core.junk_scanner import JunkManager, JunkResult, ConfidenceLevel
 from .theme import Theme, themed_canvas
+from .dialogs import themed_confirm, themed_warning, themed_info
 
 
 class JunkCleanupDialog(tk.Toplevel):
@@ -161,18 +162,19 @@ class JunkCleanupDialog(tk.Toplevel):
 
     def _cleanup_selected(self) -> None:
         if not self._selected:
-            messagebox.showwarning("提示", "请先选择要清理的项")
+            themed_warning(self, "提示", "请先选择要清理的项", self.t)
             return
         selected_junk = [j for j in self._junk if j.path in self._selected]
         if not selected_junk:
             return
-        if not messagebox.askyesno("确认清理",
-                                   f"确定要清理以下 {len(selected_junk)} 项残留吗？\n\n此操作不可撤销！", parent=self):
+        if not themed_confirm(self, "确认清理",
+                              f"确定要清理以下 {len(selected_junk)} 项残留吗？\n\n此操作不可撤销！",
+                              self.t, icon="danger"):
             return
         manager = JunkManager()
         deleted, skipped = manager.delete_junk(selected_junk)
-        messagebox.showinfo("清理完成",
-                            f"已清理 {deleted} 项残留\n跳过 {skipped} 项（低置信度）", parent=self)
+        themed_info(self, "清理完成",
+                    f"已清理 {deleted} 项残留\n跳过 {skipped} 项（低置信度）", self.t)
         self.destroy()
 
 
@@ -359,9 +361,9 @@ class UninstallerTab(ttk.Frame):
         if app.install_location:
             detail += f"安装路径: {app.install_location}"
 
-        if not messagebox.askyesno("确认卸载",
-                                   f"确定要卸载 \"{app.name}\" 吗？\n\n{detail}",
-                                   parent=self):
+        if not themed_confirm(self, "确认卸载",
+                              f"确定要卸载 \"{app.name}\" 吗？\n\n{detail}",
+                              self.t, icon="danger"):
             return
 
         self._set_status(f"正在启动 {app.name} 的卸载程序...")

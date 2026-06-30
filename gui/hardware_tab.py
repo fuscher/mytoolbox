@@ -104,7 +104,7 @@ class HardwareTab(ttk.Frame):
         btn_frame.pack(fill=tk.X)
 
         tk.Label(
-            btn_frame, text="数据来源: WMIC + kernel32 | 不需要第三方包",
+            btn_frame, text="数据来源: WMIC + kernel32",
             bg=t.bg_panel, fg=t.fg_disabled, font=(t.font_family, 8),
         ).pack(side=tk.LEFT)
 
@@ -193,6 +193,8 @@ class HardwareTab(ttk.Frame):
             add("GPU", tag, gpu.name)
             if gpu.vram_mb:
                 add("GPU", "显存", f"{gpu.vram_mb} MB")
+            else:
+                add("GPU", "显存", "未知")
             if gpu.driver_version:
                 add("GPU", "驱动版本", gpu.driver_version)
 
