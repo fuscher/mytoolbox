@@ -25,11 +25,14 @@ from .theme import Theme, themed_listbox, themed_canvas
 
 
 CARD_W = 200
-CARD_H = 226
+CARD_H = 210
 CARD_PAD_X = 10
 CARD_PAD_Y = 10
-ICON_SIZE = 68
+ICON_SIZE = 64
+ICON_PAD = 10
+CIRCLE_SIZE = 74
 GRID_COLUMNS = 4
+INSPECTOR_WIDTH = 300
 
 _INSTALLER_EXTENSIONS = {".exe", ".msi", ".msu", ".zip", ".7z", ".rar"}
 
@@ -85,12 +88,12 @@ class InstallTab(ttk.Frame):
         sep = tk.Frame(self, bg=t.border, width=1)
         sep.pack(side=tk.LEFT, fill=tk.Y)
 
-        # ── Right content area ──────────────────────────────────────────
-        right = tk.Frame(self, bg=t.bg_root)
-        right.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        # ── Main content area (card + inspector) ─────────────────────────
+        main_area = tk.Frame(self, bg=t.bg_root)
+        main_area.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-        # Top bar
-        top_bar = tk.Frame(right, bg=t.bg_root)
+        # Top bar (shared between card area and inspector)
+        top_bar = tk.Frame(main_area, bg=t.bg_root)
         top_bar.pack(fill=tk.X, padx=t.space_md, pady=(t.space_md, t.space_sm))
 
         # Search entry
@@ -121,24 +124,55 @@ class InstallTab(ttk.Frame):
         self._batch_mode_btn.pack(side=tk.RIGHT, padx=t.space_lg)
 
         # Separator
-        tk.Frame(right, bg=t.border, height=1).pack(fill=tk.X, padx=t.space_md)
+        tk.Frame(main_area, bg=t.border, height=1).pack(fill=tk.X, padx=t.space_md)
 
-        # Card canvas
-        content_frame = tk.Frame(right, bg=t.bg_canvas)
-        content_frame.pack(fill=tk.BOTH, expand=True, padx=0, pady=0)
+        # ── Card + Inspector area (grid layout) ──────────────────────────
+        self._card_container = tk.Frame(main_area, bg=t.bg_root)
+        self._card_container.pack(fill=tk.BOTH, expand=True, padx=0, pady=0)
+        self._card_container.grid_rowconfigure(0, weight=1)
 
-        self._canvas = themed_canvas(content_frame, t)
-        self._vscroll = ttk.Scrollbar(content_frame, orient=tk.VERTICAL, command=self._canvas.yview)
+        # Card canvas area (weight=1)
+        card_frame = tk.Frame(self._card_container, bg=t.bg_canvas)
+        card_frame.grid(row=0, column=0, sticky=tk.NSEW)
+        self._card_container.grid_columnconfigure(0, weight=1)
+        card_frame.grid_rowconfigure(0, weight=1)
+        card_frame.grid_columnconfigure(0, weight=1)
+
+        self._canvas = themed_canvas(card_frame, t)
+        self._vscroll = ttk.Scrollbar(card_frame, orient=tk.VERTICAL, command=self._on_scroll)
         self._canvas.configure(yscrollcommand=self._vscroll.set)
 
-        self._vscroll.pack(side=tk.RIGHT, fill=tk.Y)
-        self._canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self._vscroll.grid(row=0, column=1, sticky=tk.NS)
+        self._canvas.grid(row=0, column=0, sticky=tk.NSEW)
+
+        # Bottom area for progress bar and batch frame
+        bottom_frame = tk.Frame(card_frame, bg=t.bg_canvas)
+        bottom_frame.grid(row=1, column=0, columnspan=2, sticky=tk.EW)
+        card_frame.grid_rowconfigure(1, weight=0)
+
+        # Bottom scroll progress bar
+        self._progress_bar = tk.Canvas(bottom_frame, height=4, bg=t.scroll_progress_bg, highlightthickness=0)
+        self._progress_bar.pack(side=tk.BOTTOM, fill=tk.X)
+        self._progress_bar_rect = self._progress_bar.create_rectangle(
+            0, 0, 0, 4, fill=t.scroll_progress_fill, outline=""
+        )
 
         # Batch action bar (hidden by default)
-        self._batch_frame = tk.Frame(right, bg=t.bg_panel, height=60)
+        self._batch_frame = tk.Frame(bottom_frame, bg=t.bg_panel, height=60)
         self._batch_frame.pack(side=tk.BOTTOM, fill=tk.X)
         self._batch_frame.pack_forget()
         self._batch_frame.pack_propagate(False)
+
+        # Separator between card area and inspector (1px)
+        inspector_sep = tk.Frame(self._card_container, bg=t.border, width=1)
+        inspector_sep.grid(row=0, column=1, sticky=tk.NS)
+
+        # Inspector panel (weight=0, minsize=300)
+        self._inspector_panel = tk.Frame(self._card_container, bg=t.bg_panel)
+        self._inspector_panel.grid(row=0, column=2, sticky=tk.NSEW)
+        self._card_container.grid_columnconfigure(2, weight=0, minsize=INSPECTOR_WIDTH)
+
+        self._build_inspector()
 
         # Grid frame inside canvas
         self._grid_frame = tk.Frame(self._canvas, bg=t.bg_canvas)
@@ -150,8 +184,280 @@ class InstallTab(ttk.Frame):
         self._canvas.bind("<Configure>", self._on_canvas_resize)
         self._canvas.bind("<MouseWheel>", self._on_mousewheel)
 
+        self._selected_tool_key = None
+
+    def _build_inspector(self) -> None:
+        t = self.t
+
+        # Inspector header
+        header = tk.Frame(self._inspector_panel, bg=t.bg_panel)
+        header.pack(fill=tk.X, padx=t.space_md, pady=(t.space_md, t.space_sm))
+        tk.Label(
+            header, text="检查器", bg=t.bg_panel, fg=t.fg_primary,
+            font=(t.font_family, 10, "bold"),
+        ).pack(side=tk.LEFT)
+
+        # Separator
+        tk.Frame(self._inspector_panel, bg=t.border, height=1).pack(fill=tk.X)
+
+        # Info scrollable area
+        info_container = tk.Frame(self._inspector_panel, bg=t.bg_panel)
+        info_container.pack(fill=tk.BOTH, expand=True, padx=t.space_md, pady=t.space_sm)
+
+        info_canvas = themed_canvas(info_container, t)
+        info_canvas.configure(bg=t.bg_panel)
+        info_vscroll = ttk.Scrollbar(info_container, orient=tk.VERTICAL, command=info_canvas.yview)
+        info_canvas.configure(yscrollcommand=info_vscroll.set)
+
+        info_vscroll.pack(side=tk.RIGHT, fill=tk.Y)
+        info_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        self._inspector_info_frame = tk.Frame(info_canvas, bg=t.bg_panel)
+        info_window = info_canvas.create_window((0, 0), window=self._inspector_info_frame, anchor=tk.NW)
+
+        info_canvas.bind("<Configure>", lambda e, c=info_canvas, w=info_window: c.itemconfigure(w, width=e.width))
+        self._inspector_info_frame.bind("<Configure>", lambda e, c=info_canvas: c.configure(scrollregion=c.bbox("all")))
+
+        # Separator
+        tk.Frame(self._inspector_panel, bg=t.border, height=1).pack(fill=tk.X)
+
+        # Action buttons
+        btn_frame = tk.Frame(self._inspector_panel, bg=t.bg_panel)
+        btn_frame.pack(fill=tk.X, padx=t.space_md, pady=t.space_md)
+
+        self._inspector_install_btn = ttk.Button(
+            btn_frame, text="安装此工具", style="Accent.TButton",
+            command=self._on_inspector_install,
+        )
+        self._inspector_install_btn.pack(fill=tk.X, pady=(0, t.space_sm))
+
+        self._inspector_remove_btn = ttk.Button(
+            btn_frame, text="移除工具", style="Danger.TButton",
+            command=self._on_inspector_remove,
+        )
+        self._inspector_remove_btn.pack(fill=tk.X)
+
+        # Empty state (must be called after buttons are created)
+        self._show_empty_inspector()
+
+    def _on_scroll(self, *args) -> None:
+        self._canvas.yview(*args)
+        self._update_progress_bar()
+
     def _on_mousewheel(self, event) -> None:
         self._canvas.yview_scroll(-event.delta // 60, "units")
+        self._update_progress_bar()
+
+    def _show_empty_inspector(self) -> None:
+        t = self.t
+        for w in self._inspector_info_frame.winfo_children():
+            w.destroy()
+        empty_label = tk.Label(
+            self._inspector_info_frame, text="点击工具卡片查看详情",
+            bg=t.bg_panel, fg=t.fg_disabled, font=(t.font_family, 9),
+        )
+        empty_label.pack(pady=20)
+        self._inspector_install_btn.state(["disabled"])
+        self._inspector_remove_btn.state(["disabled"])
+
+    def _update_inspector(self, key: str, tool: ToolInfo) -> None:
+        t = self.t
+        self._selected_tool_key = key
+
+        for w in self._inspector_info_frame.winfo_children():
+            w.destroy()
+
+        name = tool.get("name") or tool.get("folder_name", "")
+        version = tool.get("version") or ""
+
+        tk.Label(
+            self._inspector_info_frame, text="工具名称", bg=t.bg_panel,
+            fg=t.fg_secondary, font=(t.font_family, 8),
+        ).pack(anchor=tk.W)
+        tk.Label(
+            self._inspector_info_frame, text=f"{name} {version}", bg=t.bg_panel,
+            fg=t.fg_primary, font=(t.font_family, 10, "bold"),
+        ).pack(anchor=tk.W, pady=(0, t.space_sm))
+
+        tk.Label(
+            self._inspector_info_frame, text="文件说明", bg=t.bg_panel,
+            fg=t.fg_secondary, font=(t.font_family, 8),
+        ).pack(anchor=tk.W)
+        desc = tool.get("description") or "无"
+        tk.Label(
+            self._inspector_info_frame, text=desc, bg=t.bg_panel,
+            fg=t.fg_primary, font=(t.font_family, 9), wraplength=INSPECTOR_WIDTH - 40,
+        ).pack(anchor=tk.W, pady=(0, t.space_sm))
+
+        installers = tool.get("installers", [])
+        if installers:
+            installer_file = installers[0].get("file", "")
+            file_name = installer_file.split("/")[-1].split("\\")[-1]
+            ext = Path(file_name).suffix.lower()
+
+            file_type_map = {
+                ".exe": "可执行文件",
+                ".msi": "Windows Installer",
+                ".msu": "更新包",
+                ".zip": "ZIP 压缩包",
+                ".7z": "7-Zip 压缩包",
+                ".rar": "RAR 压缩包",
+            }
+
+            tk.Label(
+                self._inspector_info_frame, text="文件类型", bg=t.bg_panel,
+                fg=t.fg_secondary, font=(t.font_family, 8),
+            ).pack(anchor=tk.W)
+            tk.Label(
+                self._inspector_info_frame, text=file_type_map.get(ext, ext), bg=t.bg_panel,
+                fg=t.fg_primary, font=(t.font_family, 9),
+            ).pack(anchor=tk.W, pady=(0, t.space_sm))
+
+            tools_dir = self._resolve_tools_dir()
+            file_path = tools_dir / file_name
+            if file_path.exists():
+                pe_info = self._get_pe_version_info(str(file_path))
+
+                tk.Label(
+                    self._inspector_info_frame, text="文件版本", bg=t.bg_panel,
+                    fg=t.fg_secondary, font=(t.font_family, 8),
+                ).pack(anchor=tk.W)
+                tk.Label(
+                    self._inspector_info_frame, text=pe_info.get("FileVersion", "无"), bg=t.bg_panel,
+                    fg=t.fg_primary, font=(t.font_family, 9),
+                ).pack(anchor=tk.W, pady=(0, t.space_sm))
+
+                tk.Label(
+                    self._inspector_info_frame, text="产品名称", bg=t.bg_panel,
+                    fg=t.fg_secondary, font=(t.font_family, 8),
+                ).pack(anchor=tk.W)
+                tk.Label(
+                    self._inspector_info_frame, text=pe_info.get("ProductName", "无"), bg=t.bg_panel,
+                    fg=t.fg_primary, font=(t.font_family, 9),
+                ).pack(anchor=tk.W, pady=(0, t.space_sm))
+
+                tk.Label(
+                    self._inspector_info_frame, text="产品版本", bg=t.bg_panel,
+                    fg=t.fg_secondary, font=(t.font_family, 8),
+                ).pack(anchor=tk.W)
+                tk.Label(
+                    self._inspector_info_frame, text=pe_info.get("ProductVersion", "无"), bg=t.bg_panel,
+                    fg=t.fg_primary, font=(t.font_family, 9),
+                ).pack(anchor=tk.W, pady=(0, t.space_sm))
+
+                file_size = file_path.stat().st_size
+                tk.Label(
+                    self._inspector_info_frame, text="文件大小", bg=t.bg_panel,
+                    fg=t.fg_secondary, font=(t.font_family, 8),
+                ).pack(anchor=tk.W)
+                tk.Label(
+                    self._inspector_info_frame, text=self._format_size(file_size), bg=t.bg_panel,
+                    fg=t.fg_primary, font=(t.font_family, 9),
+                ).pack(anchor=tk.W, pady=(0, t.space_sm))
+
+                mtime = file_path.stat().st_mtime
+                import time
+                mod_date = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(mtime))
+                tk.Label(
+                    self._inspector_info_frame, text="修改日期", bg=t.bg_panel,
+                    fg=t.fg_secondary, font=(t.font_family, 8),
+                ).pack(anchor=tk.W)
+                tk.Label(
+                    self._inspector_info_frame, text=mod_date, bg=t.bg_panel,
+                    fg=t.fg_primary, font=(t.font_family, 9),
+                ).pack(anchor=tk.W, pady=(0, t.space_sm))
+
+        installed = is_installed(key, self.config)
+        archive_extensions = {".zip", ".7z", ".rar"}
+        is_archive = False
+        if installers:
+            installer_file = installers[0].get("file", "")
+            ext = Path(installer_file).suffix.lower()
+            is_archive = ext in archive_extensions
+
+        if installed:
+            self._inspector_install_btn.config(text="✔ 已安装")
+            self._inspector_install_btn.state(["disabled"])
+        elif is_archive:
+            self._inspector_install_btn.config(text="打开压缩包")
+            self._inspector_install_btn.state(["!disabled"])
+        elif installers:
+            self._inspector_install_btn.config(text="安装此工具")
+            self._inspector_install_btn.state(["!disabled"])
+        else:
+            self._inspector_install_btn.config(text="无安装包")
+            self._inspector_install_btn.state(["disabled"])
+
+        self._inspector_remove_btn.state(["!disabled"])
+
+    def _get_pe_version_info(self, file_path: str) -> dict:
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            kernel32 = ctypes.windll.kernel32
+            version = ctypes.windll.version
+
+            file_path_w = ctypes.c_wchar_p(file_path)
+            dummy = wintypes.DWORD()
+
+            size = version.GetFileVersionInfoSizeW(file_path_w, ctypes.byref(dummy))
+            if size == 0:
+                return {}
+
+            buffer = ctypes.create_string_buffer(size)
+            if not version.GetFileVersionInfoW(file_path_w, 0, size, buffer):
+                return {}
+
+            def get_value(key):
+                pvalue = wintypes.LPWSTR()
+                value_size = wintypes.UINT()
+                if version.VerQueryValueW(buffer, ctypes.c_wchar_p(key),
+                                          ctypes.byref(pvalue), ctypes.byref(value_size)):
+                    if pvalue:
+                        return ctypes.wstring_at(pvalue)
+                return ""
+
+            info = {}
+            info["FileVersion"] = get_value(r"\StringFileInfo\040904B0\FileVersion")
+            info["ProductName"] = get_value(r"\StringFileInfo\040904B0\ProductName")
+            info["ProductVersion"] = get_value(r"\StringFileInfo\040904B0\ProductVersion")
+            info["FileDescription"] = get_value(r"\StringFileInfo\040904B0\FileDescription")
+            info["CompanyName"] = get_value(r"\StringFileInfo\040904B0\CompanyName")
+
+            return info
+        except Exception:
+            return {}
+
+    def _format_size(self, size: int) -> str:
+        if size < 1024:
+            return f"{size} B"
+        elif size < 1024 * 1024:
+            return f"{size / 1024:.2f} KB"
+        elif size < 1024 * 1024 * 1024:
+            return f"{size / (1024 * 1024):.2f} MB"
+        else:
+            return f"{size / (1024 * 1024 * 1024):.2f} GB"
+
+    def _on_inspector_install(self) -> None:
+        if not self._selected_tool_key or not self._scan:
+            return
+        tool = self._scan["tools"].get(self._selected_tool_key)
+        if not tool:
+            return
+        version_var = tk.IntVar(value=0)
+        installers = tool.get("installers", [])
+        if len(installers) > 1 and hasattr(version_var, '_combo'):
+            version_var.set(version_var._combo.current())
+        self._on_install(self._selected_tool_key, tool, version_var)
+
+    def _on_inspector_remove(self) -> None:
+        if not self._selected_tool_key or not self._scan:
+            return
+        tool = self._scan["tools"].get(self._selected_tool_key)
+        if not tool:
+            return
+        self._on_remove_tool(self._selected_tool_key, tool)
 
     def refresh(self) -> None:
         """Rescan tools/ and rebuild the UI."""
@@ -665,6 +971,11 @@ class InstallTab(ttk.Frame):
             ).pack(pady=(t.space_sm, 0))
             return
 
+        canvas_width = self._canvas.winfo_width()
+        if canvas_width <= 0:
+            canvas_width = 800
+        columns = max(1, canvas_width // (CARD_W + CARD_PAD_X))
+
         state = load_state(self.config)
 
         col, row = 0, 0
@@ -674,7 +985,7 @@ class InstallTab(ttk.Frame):
             card.grid(row=row, column=col, padx=CARD_PAD_X // 2, pady=CARD_PAD_Y // 2, sticky=tk.N)
             self._card_frames.append(card)
             col += 1
-            if col >= GRID_COLUMNS:
+            if col >= columns:
                 col = 0
                 row += 1
 
@@ -714,15 +1025,31 @@ class InstallTab(ttk.Frame):
                         icon_path = Path(extracted)
                         break
 
-        # Icon background circle (decorative)
+        installers = tool.get("installers", [])
+        installed = is_installed(key, self.config)
+        archive_extensions = {".zip", ".7z", ".rar"}
+        is_archive = False
+        if installers:
+            installer_file = installers[0].get("file", "")
+            ext = Path(installer_file).suffix.lower()
+            is_archive = ext in archive_extensions
+
+        can_install = not installed and (is_archive or installers)
+
         icon_container = tk.Canvas(
-            card, width=ICON_SIZE + 12, height=ICON_SIZE + 12,
+            card, width=CIRCLE_SIZE, height=CIRCLE_SIZE,
             bg=t.bg_card, highlightthickness=0,
+            cursor="hand2" if can_install else "arrow",
         )
         icon_container.pack(pady=(t.space_md, t.space_xs))
-        icon_container.create_oval(
-            2, 2, ICON_SIZE + 10, ICON_SIZE + 10,
-            fill=t.bg_input, outline="",
+
+        circle_fill = t.bg_input
+        if can_install:
+            circle_fill = t.bg_input
+
+        circle_id = icon_container.create_oval(
+            ICON_PAD // 2, ICON_PAD // 2, CIRCLE_SIZE - ICON_PAD // 2, CIRCLE_SIZE - ICON_PAD // 2,
+            fill=circle_fill, outline="",
         )
 
         try:
@@ -733,12 +1060,39 @@ class InstallTab(ttk.Frame):
                 factor_y = max(1, ih // ICON_SIZE)
                 img = img.subsample(factor_x, factor_y)
             self._photo_refs.append(img)
-            icon_container.create_image((ICON_SIZE + 12) // 2, (ICON_SIZE + 12) // 2, image=img)
+            icon_container.create_image(CIRCLE_SIZE // 2, CIRCLE_SIZE // 2, image=img)
         except tk.TclError:
             icon_container.create_text(
-                (ICON_SIZE + 12) // 2, (ICON_SIZE + 12) // 2,
-                text="📦", font=("Segoe UI Emoji", 28), fill=t.fg_disabled,
+                CIRCLE_SIZE // 2, CIRCLE_SIZE // 2,
+                text="📦", font=("Segoe UI Emoji", 24), fill=t.fg_disabled,
             )
+
+        version_var = tk.IntVar(value=0)
+        if len(installers) > 1:
+            labels = [inst["label"] for inst in installers]
+            combo = ttk.Combobox(card, values=labels, state="readonly", width=14)
+            combo.current(0)
+            combo.bind("<<ComboboxSelected>>",
+                       lambda e, vv=version_var, cb=combo: vv.set(cb.current()))
+            version_var._combo = combo
+
+        def _on_icon_click(e):
+            if can_install:
+                if len(installers) > 1 and hasattr(version_var, '_combo'):
+                    version_var.set(version_var._combo.current())
+                self._on_install(key, tool, version_var)
+
+        def _on_icon_enter(e):
+            if can_install:
+                icon_container.itemconfig(circle_id, fill=t.bg_hover)
+
+        def _on_icon_leave(e):
+            icon_container.itemconfig(circle_id, fill=t.bg_input)
+
+        if can_install:
+            icon_container.bind("<Button-1>", _on_icon_click)
+            icon_container.bind("<Enter>", _on_icon_enter)
+            icon_container.bind("<Leave>", _on_icon_leave)
 
         # ── Remove button (subtle) ──────────────────────────────────
         remove_btn = tk.Label(
@@ -759,9 +1113,6 @@ class InstallTab(ttk.Frame):
         name_label.pack(pady=(0, 2))
 
         # ── Version ─────────────────────────────────────────────────
-        installers = tool.get("installers", [])
-        version_var = tk.IntVar(value=0)
-
         if len(installers) > 1:
             ver_frame = tk.Frame(card, bg=t.bg_card)
             ver_frame.pack(pady=2)
@@ -780,51 +1131,43 @@ class InstallTab(ttk.Frame):
                     font=(t.font_family, 8),
                 ).pack(pady=2)
 
-        # ── Action button ───────────────────────────────────────────
-        installed = is_installed(key, self.config)
-        archive_extensions = {".zip", ".7z", ".rar"}
-        is_archive = False
-        if installers:
-            installer_file = installers[0].get("file", "")
-            ext = Path(installer_file).suffix.lower()
-            is_archive = ext in archive_extensions
-
+        # ── Installed status indicator ──────────────────────────────
         if installed:
-            btn_text = "✔ 已安装"
-            btn_style = "TButton"
-            btn_state = tk.DISABLED
+            tk.Label(
+                card, text="✔ 已安装", bg=t.bg_card, fg=t.success,
+                font=(t.font_family, 8),
+            ).pack(pady=(6, t.space_md))
         elif is_archive:
-            btn_text = "打开"
-            btn_style = "TButton"
-            btn_state = tk.NORMAL
+            tk.Label(
+                card, text="📁 压缩包", bg=t.bg_card, fg=t.fg_secondary,
+                font=(t.font_family, 8),
+            ).pack(pady=(6, t.space_md))
         elif installers:
-            btn_text = "安装"
-            btn_style = "Accent.TButton"
-            btn_state = tk.NORMAL
+            pass
         else:
-            btn_text = "无安装包"
-            btn_style = "TButton"
-            btn_state = tk.DISABLED
+            tk.Label(
+                card, text="无安装包", bg=t.bg_card, fg=t.fg_disabled,
+                font=(t.font_family, 8),
+            ).pack(pady=(6, t.space_md))
 
-        btn = ttk.Button(
-            card, text=btn_text, style=btn_style,
-            command=lambda k=key, tl=tool, vv=version_var: self._on_install(k, tl, vv),
-        )
-        if btn_state == tk.DISABLED:
-            btn.state(["disabled"])
-        btn.pack(pady=(6, t.space_md))
+        def _on_card_click(e):
+            if e.widget != icon_container:
+                self._update_inspector(key, tool)
 
-        # Hover effect on card border
         def _on_enter(e, c=card):
             c.configure(highlightbackground=t.border_focus)
         def _on_leave(e, c=card):
             c.configure(highlightbackground=t.border)
+
+        card.bind("<Button-1>", _on_card_click)
         card.bind("<Enter>", _on_enter)
         card.bind("<Leave>", _on_leave)
-        # Propagate to children so hover works on any part of the card
+
         for child in card.winfo_children():
-            child.bind("<Enter>", _on_enter)
-            child.bind("<Leave>", _on_leave)
+            if child != icon_container:
+                child.bind("<Button-1>", _on_card_click)
+                child.bind("<Enter>", _on_enter)
+                child.bind("<Leave>", _on_leave)
 
         return card
 
@@ -883,9 +1226,28 @@ class InstallTab(ttk.Frame):
 
     def _on_grid_resize(self, _event=None) -> None:
         self._canvas.configure(scrollregion=self._canvas.bbox("all"))
+        self._update_progress_bar()
 
     def _on_canvas_resize(self, event) -> None:
         self._canvas.itemconfig(self._canvas_window, width=event.width)
+        self._update_progress_bar()
+        self._rebuild_cards()
+
+    def _update_progress_bar(self) -> None:
+        try:
+            total = self._canvas.bbox("all")[3] if self._canvas.bbox("all") else 0
+            visible = self._canvas.winfo_height()
+            if total <= visible:
+                self._progress_bar.coords(self._progress_bar_rect, 0, 0, 0, 4)
+                return
+            scroll_y = self._canvas.yview()[0]
+            progress = scroll_y / (total - visible) * visible if total > visible else 0
+            bar_width = self._progress_bar.winfo_width()
+            fill_width = int(bar_width * (visible / total))
+            x_pos = int(bar_width * progress)
+            self._progress_bar.coords(self._progress_bar_rect, x_pos, 0, x_pos + fill_width, 4)
+        except Exception:
+            pass
 
     def destroy(self) -> None:
         if self._watcher and self._watchdog_imported:

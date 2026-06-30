@@ -55,6 +55,9 @@ class Theme:
     danger: str
     danger_hover: str
 
+    scroll_progress_bg: str
+    scroll_progress_fill: str
+
     # ── Typography ──────────────────────────────────────────────────────
     font_family: str = "Microsoft YaHei UI"
     font_mono: str = "Consolas"
@@ -97,10 +100,12 @@ class Theme:
         "accent_hover":   "#6DB5FF",
         "accent_pressed": "#3A8EE8",
 
-        "success":        "#4ADE80",
-        "warning":        "#F59E0B",
-        "danger":         "#EF4444",
-        "danger_hover":   "#F87171",
+        "success":              "#4ADE80",
+        "warning":              "#F59E0B",
+        "danger":               "#EF4444",
+        "danger_hover":         "#F87171",
+        "scroll_progress_bg":   "#2E2E48",
+        "scroll_progress_fill": "#4A9EFF",
     }
 
     _light_defaults: ClassVar[dict] = {
@@ -123,10 +128,12 @@ class Theme:
         "accent_hover":   "#2563EB",
         "accent_pressed": "#1D4ED8",
 
-        "success":        "#22C55E",
-        "warning":        "#F59E0B",
-        "danger":         "#EF4444",
-        "danger_hover":   "#DC2626",
+        "success":              "#22C55E",
+        "warning":              "#F59E0B",
+        "danger":               "#EF4444",
+        "danger_hover":         "#DC2626",
+        "scroll_progress_bg":   "#E0E0EC",
+        "scroll_progress_fill": "#3B82F6",
     }
 
     @classmethod
