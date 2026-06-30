@@ -327,11 +327,12 @@ def apply_theme(root: tk.Tk, theme: Theme) -> ttk.Style:
               bordercolor=[("focus", theme.border_focus)])
 
     # ── TScrollbar ──────────────────────────────────────────────────────
+    # arrow-size=16 gives a thicker, more clickable scrollbar (~16 px wide).
     style.configure("TScrollbar",
                     background=theme.bg_panel,
                     troughcolor=theme.bg_root,
                     borderwidth=0,
-                    arrowsize=0,
+                    arrowsize=16,
                     relief=tk.FLAT)
     style.map("TScrollbar",
               background=[("active", theme.bg_hover)])

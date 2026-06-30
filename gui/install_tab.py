@@ -24,8 +24,10 @@ from .dialogs import CategoryManageDialog, _BatchCategorizeDialog
 from .theme import Theme, themed_listbox, themed_canvas
 
 
-CARD_W = 200
-CARD_H = 210
+CARD_W = 200        # fallback / default card width
+CARD_H = 189        # card height (fixed, ~90% of original 210)
+MIN_CARD_W = 160    # smallest card width for readability
+MAX_CARD_W = 200    # largest card width to avoid excess whitespace
 CARD_PAD_X = 10
 CARD_PAD_Y = 10
 ICON_SIZE = 64
@@ -35,6 +37,28 @@ GRID_COLUMNS = 4
 INSPECTOR_WIDTH = 300
 
 _INSTALLER_EXTENSIONS = {".exe", ".msi", ".msu", ".zip", ".7z", ".rar"}
+
+
+def _bind_wheel_children(tab: "InstallTab", canvas: tk.Canvas,
+                         handler: Callable) -> None:
+    """Recursively bind ``<MouseWheel>`` on every child of *canvas*
+    (and the windowed frame inside it) so scrolling works regardless
+    of which card / label the pointer is over."""
+    canvas.bind("<MouseWheel>", handler, add=True)
+    # The real grid is inside a canvas window — get that frame
+    children = canvas.winfo_children()
+    for w in children:
+        w.bind("<MouseWheel>", handler, add=True)
+        # tk.Canvas.create_window embeds a tk.Frame; reach its kids
+        if isinstance(w, tk.Frame):
+            _bind_recursive(w, handler)
+
+
+def _bind_recursive(widget: tk.Widget, handler: Callable) -> None:
+    """Walk *widget*'s subtree and bind ``<MouseWheel>`` everywhere."""
+    widget.bind("<MouseWheel>", handler, add=True)
+    for child in widget.winfo_children():
+        _bind_recursive(child, handler)
 
 
 class InstallTab(ttk.Frame):
@@ -54,6 +78,7 @@ class InstallTab(ttk.Frame):
         self._watchdog_imported = False
         self._watchdog_path = None
         self._refresh_pending = False
+        self._last_card_width = CARD_W
         self._icon_extractor = IconExtractor()
         self._selected_tools: Set[str] = set()
         self._batch_frame: Optional[tk.Frame] = None
@@ -183,6 +208,8 @@ class InstallTab(ttk.Frame):
         self._grid_frame.bind("<Configure>", self._on_grid_resize)
         self._canvas.bind("<Configure>", self._on_canvas_resize)
         self._canvas.bind("<MouseWheel>", self._on_mousewheel)
+        # Propagate scroll events from all children to the canvas
+        _bind_wheel_children(self, self._canvas, self._on_mousewheel)
 
         self._selected_tool_key = None
 
@@ -211,6 +238,9 @@ class InstallTab(ttk.Frame):
 
         info_vscroll.pack(side=tk.RIGHT, fill=tk.Y)
         info_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        self._inspector_canvas = info_canvas
+        info_canvas.bind("<MouseWheel>", self._on_inspector_wheel)
 
         self._inspector_info_frame = tk.Frame(info_canvas, bg=t.bg_panel)
         info_window = info_canvas.create_window((0, 0), window=self._inspector_info_frame, anchor=tk.NW)
@@ -242,11 +272,39 @@ class InstallTab(ttk.Frame):
 
     def _on_scroll(self, *args) -> None:
         self._canvas.yview(*args)
+        self._clamp_canvas_view(self._canvas)
         self._update_progress_bar()
 
     def _on_mousewheel(self, event) -> None:
         self._canvas.yview_scroll(-event.delta // 60, "units")
+        self._clamp_canvas_view(self._canvas)
         self._update_progress_bar()
+
+    def _on_inspector_wheel(self, event) -> None:
+        self._inspector_canvas.yview_scroll(-event.delta // 60, "units")
+        self._clamp_canvas_view(self._inspector_canvas)
+
+    @staticmethod
+    def _clamp_canvas_view(canvas: tk.Canvas) -> None:
+        """Prevent the scrolled canvas window from drifting past bounds
+        and leaving a gap at top or bottom."""
+        bbox = canvas.bbox("all")
+        if not bbox:
+            return
+        content_h = bbox[3] - bbox[1]
+        view_h = canvas.winfo_height()
+        # Content fits entirely — no scrolling needed, pin to origin
+        if content_h <= view_h:
+            canvas.yview_moveto(0.0)
+            return
+
+        y0, y1 = canvas.yview()
+        # Scrolled past top
+        if y0 <= 0.0:
+            canvas.yview_moveto(0.0)
+        # Scrolled past bottom
+        elif y1 >= 1.0:
+            canvas.yview_moveto(1.0)
 
     def _show_empty_inspector(self) -> None:
         t = self.t
@@ -934,6 +992,33 @@ class InstallTab(ttk.Frame):
 
     # ── Card grid ─────────────────────────────────────────────────────────
 
+    def _compute_card_width(self, canvas_w: int | None = None) -> int:
+        """Return a responsive card width derived from the canvas width.
+
+        The width is chosen as a percentage of the available area so that
+        cards fill the grid evenly.  Clamped to [MIN_CARD_W, MAX_CARD_W].
+        """
+        if canvas_w is None:
+            canvas_w = self._canvas.winfo_width()
+        if canvas_w <= 0:
+            return CARD_W  # default before first layout pass
+
+        # Target column count: 4 on narrow windows up to ~8 on ultrawide
+        # Pick the count that yields a card width closest to ~180 px
+        best_w = MIN_CARD_W
+        best_cols = 1
+        for cols in range(4, 10):
+            w = (canvas_w // cols) - CARD_PAD_X
+            if MIN_CARD_W <= w <= MAX_CARD_W:
+                return int(w)
+            # track best fallback
+            if abs(w - 180) < abs(best_w - 180):
+                best_w = w
+                best_cols = cols
+
+        # fallback: clamp whatever we got
+        return int(max(MIN_CARD_W, min(MAX_CARD_W, best_w)))
+
     def _rebuild_cards(self) -> None:
         for w in self._grid_frame.winfo_children():
             w.destroy()
@@ -971,17 +1056,18 @@ class InstallTab(ttk.Frame):
             ).pack(pady=(t.space_sm, 0))
             return
 
+        card_width = self._compute_card_width()
         canvas_width = self._canvas.winfo_width()
         if canvas_width <= 0:
             canvas_width = 800
-        columns = max(1, canvas_width // (CARD_W + CARD_PAD_X))
+        columns = max(1, canvas_width // (card_width + CARD_PAD_X))
 
         state = load_state(self.config)
 
         col, row = 0, 0
         for key in sorted(tools.keys()):
             tool = tools[key]
-            card = self._make_card(self._grid_frame, key, tool, state)
+            card = self._make_card(self._grid_frame, key, tool, state, card_width)
             card.grid(row=row, column=col, padx=CARD_PAD_X // 2, pady=CARD_PAD_Y // 2, sticky=tk.N)
             self._card_frames.append(card)
             col += 1
@@ -989,11 +1075,16 @@ class InstallTab(ttk.Frame):
                 col = 0
                 row += 1
 
-    def _make_card(self, parent: tk.Widget, key: str, tool: ToolInfo, state: dict) -> tk.Frame:
+        # Re-bind wheel to all new card children so scrolling works
+        # wherever the mouse lands on the grid.
+        _bind_wheel_children(self, self._canvas, self._on_mousewheel)
+
+    def _make_card(self, parent: tk.Widget, key: str, tool: ToolInfo, state: dict,
+                   card_width: int = CARD_W) -> tk.Frame:
         t = self.t
 
         # Card frame — tk.Frame for full bg colour control
-        card = tk.Frame(parent, width=CARD_W, height=CARD_H, bg=t.bg_card,
+        card = tk.Frame(parent, width=card_width, height=CARD_H, bg=t.bg_card,
                         highlightthickness=1, highlightbackground=t.border,
                         highlightcolor=t.border_focus)
         card.pack_propagate(False)
@@ -1099,7 +1190,7 @@ class InstallTab(ttk.Frame):
             card, text="✕", bg=t.bg_card, fg=t.fg_disabled,
             font=(t.font_family, 10), cursor="hand2",
         )
-        remove_btn.place(x=CARD_W - 26, y=t.space_xs)
+        remove_btn.place(x=card_width - 26, y=t.space_xs)
         remove_btn.bind("<Button-1>", lambda e, k=key, tl=tool: self._on_remove_tool(k, tl))
         remove_btn.bind("<Enter>", lambda e, lbl=remove_btn: lbl.configure(fg=t.danger))
         remove_btn.bind("<Leave>", lambda e, lbl=remove_btn: lbl.configure(fg=t.fg_disabled))
@@ -1108,7 +1199,7 @@ class InstallTab(ttk.Frame):
         name = tool.get("name") or tool["folder_name"]
         name_label = tk.Label(
             card, text=name, bg=t.bg_card, fg=t.fg_primary,
-            font=(t.font_family, 9, "bold"), wraplength=CARD_W - 20, justify=tk.CENTER,
+            font=(t.font_family, 9, "bold"), wraplength=card_width - 20, justify=tk.CENTER,
         )
         name_label.pack(pady=(0, 2))
 
@@ -1231,7 +1322,12 @@ class InstallTab(ttk.Frame):
     def _on_canvas_resize(self, event) -> None:
         self._canvas.itemconfig(self._canvas_window, width=event.width)
         self._update_progress_bar()
-        self._rebuild_cards()
+        # Avoid full rebuild on every pixel-drag — only rebuild when
+        # the responsive card width would actually change.
+        new_width = self._compute_card_width(event.width)
+        if abs(new_width - self._last_card_width) >= 1:
+            self._last_card_width = new_width
+            self._rebuild_cards()
 
     def _update_progress_bar(self) -> None:
         try:

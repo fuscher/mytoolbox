@@ -64,16 +64,18 @@ class IconExtractor:
         if output_path.exists():
             return str(output_path)
 
+        # Try subprocess first — it is process-isolated, so GDI crashes
+        # in one extraction never bring down the main app.
+        result = self._extract_with_subprocess(exe_path, output_path)
+        if result:
+            return result
+
         if _HAS_PYWIN32:
             result = self._extract_with_pywin32(exe_path, output_path)
             if result:
                 return result
-        
-        result = self._extract_with_ctypes(exe_path, output_path)
-        if result:
-            return result
-        
-        return self._extract_with_subprocess(exe_path, output_path)
+
+        return self._extract_with_ctypes(exe_path, output_path)
 
     def _extract_with_pywin32(self, exe_path: str, output_path: Path) -> Optional[str]:
         """使用 pywin32 提取图标。"""
@@ -117,64 +119,60 @@ class IconExtractor:
         hdc_mem = 0
         bmp = 0
         old_bmp = 0
-        
+
         try:
             shell32 = ctypes.windll.shell32
             user32 = ctypes.windll.user32
             gdi32 = ctypes.windll.gdi32
 
             hicon = shell32.ExtractIconW(0, exe_path, 0)
-            if hicon == 0 or hicon > 65535:
+            if hicon == 0 or hicon == 0xFFFFFFFF:
                 return None
 
             hdc = user32.GetDC(0)
             if hdc == 0:
-                if hicon:
-                    user32.DestroyIcon(hicon)
+                user32.DestroyIcon(hicon); hicon = 0
                 return None
 
             hdc_mem = gdi32.CreateCompatibleDC(hdc)
             if hdc_mem == 0:
-                user32.ReleaseDC(0, hdc)
-                if hicon:
-                    user32.DestroyIcon(hicon)
+                user32.ReleaseDC(0, hdc); hdc = 0
+                user32.DestroyIcon(hicon); hicon = 0
                 return None
 
             bmp = gdi32.CreateCompatibleBitmap(hdc, 64, 64)
             if bmp == 0:
-                gdi32.DeleteDC(hdc_mem)
-                user32.ReleaseDC(0, hdc)
-                if hicon:
-                    user32.DestroyIcon(hicon)
+                gdi32.DeleteDC(hdc_mem); hdc_mem = 0
+                user32.ReleaseDC(0, hdc); hdc = 0
+                user32.DestroyIcon(hicon); hicon = 0
                 return None
 
             old_bmp = gdi32.SelectObject(hdc_mem, bmp)
 
             result = user32.DrawIconEx(hdc_mem, 0, 0, hicon, 64, 64, 0, 0, 0x0003)
             if result == 0:
-                gdi32.SelectObject(hdc_mem, old_bmp)
-                gdi32.DeleteDC(hdc_mem)
-                user32.ReleaseDC(0, hdc)
-                if hicon:
-                    user32.DestroyIcon(hicon)
-                gdi32.DeleteObject(bmp)
+                gdi32.SelectObject(hdc_mem, old_bmp); old_bmp = 0
+                gdi32.DeleteDC(hdc_mem); hdc_mem = 0
+                user32.ReleaseDC(0, hdc); hdc = 0
+                user32.DestroyIcon(hicon); hicon = 0
+                gdi32.DeleteObject(bmp); bmp = 0
                 return None
 
             bitmap_info = struct.pack("LLLLLLLLLL", 40, 64, 64, 1, 32, 0, 0, 0, 0, 0)
-            
+
             gdi32.GetDIBits(hdc, bmp, 0, 64, None, bitmap_info, 0)
-            
+
             buffer_size = 64 * 64 * 4
             buffer = ctypes.create_string_buffer(buffer_size)
 
             result = gdi32.GetDIBits(hdc, bmp, 0, 64, buffer, bitmap_info, 0)
 
-            gdi32.SelectObject(hdc_mem, old_bmp)
-            gdi32.DeleteDC(hdc_mem)
-            user32.ReleaseDC(0, hdc)
-            if hicon:
-                user32.DestroyIcon(hicon)
-            gdi32.DeleteObject(bmp)
+            # Release all GDI resources BEFORE any Python work that could throw
+            gdi32.SelectObject(hdc_mem, old_bmp); old_bmp = 0
+            gdi32.DeleteDC(hdc_mem); hdc_mem = 0
+            user32.ReleaseDC(0, hdc); hdc = 0
+            user32.DestroyIcon(hicon); hicon = 0
+            gdi32.DeleteObject(bmp); bmp = 0
 
             if result == 0:
                 return None
@@ -185,6 +183,10 @@ class IconExtractor:
                 return str(output_path)
 
         except Exception:
+            pass
+        finally:
+            # Best-effort cleanup — only for resources that haven't been
+            # released yet (idempotent on zero handles).
             try:
                 if old_bmp:
                     gdi32.SelectObject(hdc_mem, old_bmp)
@@ -225,7 +227,7 @@ def extract_icon(exe_path, output_path):
         gdi32 = ctypes.windll.gdi32
 
         hicon = shell32.ExtractIconW(0, exe_path, 0)
-        if hicon == 0 or hicon > 65535:
+        if hicon == 0 or hicon == 0xFFFFFFFF:
             return False
 
         hdc = user32.GetDC(0)

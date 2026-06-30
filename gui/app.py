@@ -15,6 +15,7 @@ from typing import Optional
 from .theme import Theme, apply_theme, themed_canvas
 from .install_tab import InstallTab
 from .uninstaller_tab import UninstallerTab
+from .hardware_tab import HardwareTab
 from core import get_app_root
 
 # Paths the app looks up at startup
@@ -76,9 +77,11 @@ class App(tk.Tk):
 
         self.install_tab = InstallTab(self.notebook, self.config, self._theme, self._set_status)
         self.uninstaller_tab = UninstallerTab(self.notebook, self.config, self._theme, self._set_status)
+        self.hardware_tab = HardwareTab(self.notebook, self.config, self._theme, self._set_status)
 
         self.notebook.add(self.install_tab, text="  安装包  ")
         self.notebook.add(self.uninstaller_tab, text="  应用管理  ")
+        self.notebook.add(self.hardware_tab, text="  硬件信息  ")
 
     # ── Toolbar ───────────────────────────────────────────────────────────
 
