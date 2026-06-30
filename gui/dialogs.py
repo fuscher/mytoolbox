@@ -14,6 +14,7 @@ from tkinter import filedialog, ttk, messagebox
 from typing import Dict, List, Optional
 
 from core.scanner import scan_tools
+from core import get_app_root
 from .theme import Theme, themed_text
 
 
@@ -73,7 +74,7 @@ class AddToolDialog(tk.Toplevel):
         td = self.config.get("tools_dir", "")
         if td:
             return Path(td).resolve()
-        return Path(__file__).resolve().parent.parent / "tools"
+        return get_app_root() / "tools"
 
     def _build_ui(self) -> None:
         t = self.t
@@ -233,7 +234,7 @@ class _NewCategoryDialog(tk.Toplevel):
         self.result: Optional[str] = None
         self.transient(parent)
         self.title("新建分类")
-        self.geometry("320x140")
+        self.geometry("320x170")
         self.resizable(False, False)
         self.grab_set()
         self.configure(bg=theme.bg_root)
@@ -454,7 +455,7 @@ class _EditCategoryDialog(tk.Toplevel):
         self.result: Optional[str] = None
         self.transient(parent)
         self.title("编辑分类")
-        self.geometry("320x140")
+        self.geometry("320x170")
         self.resizable(False, False)
         self.grab_set()
         self.configure(bg=theme.bg_root)

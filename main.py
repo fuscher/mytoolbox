@@ -16,8 +16,11 @@ import sys
 from pathlib import Path
 
 
+from core import get_app_root
+
+
 def _load_config() -> dict:
-    cfg_path = Path(__file__).resolve().parent / "config.json"
+    cfg_path = get_app_root() / "config.json"
     if cfg_path.exists():
         try:
             return json.loads(cfg_path.read_text(encoding="utf-8"))

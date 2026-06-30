@@ -17,10 +17,13 @@ from .models import InstalledToolState
 # Internal helpers
 # ---------------------------------------------------------------------------
 
+from . import get_app_root  # noqa: E402
+
+
 def _state_path(config: Optional[dict] = None) -> Path:
     if config and "state_file" in config:
         return Path(config["state_file"]).resolve()
-    return Path(__file__).resolve().parent.parent / "installed.json"
+    return get_app_root() / "installed.json"
 
 
 # ---------------------------------------------------------------------------

@@ -134,8 +134,9 @@ StatusCallback = Callable[[str, str], None]
 def _resolve_installer_path(tool_info: ToolInfo, installer_index: int,
                             config: Optional[dict]) -> Path:
     """Build absolute path to the chosen installer file."""
+    from . import get_app_root
     tools_dir = Path(config.get("tools_dir", "")).resolve() if config else \
-                Path(__file__).resolve().parent.parent / "tools"
+                get_app_root() / "tools"
     installers = tool_info.get("installers", [])
     if not installers:
         raise FileNotFoundError(f"工具 {tool_info['name']} 没有安装包")

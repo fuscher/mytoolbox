@@ -15,9 +15,10 @@ from typing import Optional
 from .theme import Theme, apply_theme, themed_canvas
 from .install_tab import InstallTab
 from .uninstaller_tab import UninstallerTab
+from core import get_app_root
 
 # Paths the app looks up at startup
-_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+_PROJECT_ROOT = get_app_root()
 _RESOURCES = _PROJECT_ROOT / "resources"
 
 
@@ -152,7 +153,7 @@ class App(tk.Tk):
 
     @staticmethod
     def _load_config() -> dict:
-        cfg_path = Path(__file__).resolve().parent.parent / "config.json"
+        cfg_path = get_app_root() / "config.json"
         if cfg_path.exists():
             try:
                 return json.loads(cfg_path.read_text(encoding="utf-8"))

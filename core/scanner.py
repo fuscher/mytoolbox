@@ -12,13 +12,14 @@ from typing import Dict, List, Optional
 
 from .models import CategoryInfo, InstallerEntry, ScanResult, ToolInfo
 from .index_manager import IndexManager
+from . import get_app_root
 
 
 def _resolve_tools_dir(config: Optional[dict] = None) -> Path:
     if config and "tools_dir" in config:
         p = Path(config["tools_dir"])
     else:
-        p = Path(__file__).resolve().parent.parent / "tools"
+        p = get_app_root() / "tools"
     return p.resolve()
 
 

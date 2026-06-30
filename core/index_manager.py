@@ -12,6 +12,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 
+from . import get_app_root
+
 INDEX_VERSION = "1.0"
 
 
@@ -20,7 +22,7 @@ class IndexManager:
 
     def __init__(self, tools_dir: Optional[Path] = None):
         if tools_dir is None:
-            tools_dir = Path(__file__).resolve().parent.parent / "tools"
+            tools_dir = get_app_root() / "tools"
         self.tools_dir = tools_dir.resolve()
         self.index_path = self.tools_dir / "_index.json"
         self._load()

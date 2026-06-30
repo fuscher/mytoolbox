@@ -26,11 +26,13 @@ try:
 except ImportError:
     _HAS_MSILIB = False
 
+from . import get_app_root
+
 
 class IconExtractor:
     def __init__(self, cache_dir: Optional[Path] = None):
         if cache_dir is None:
-            cache_dir = Path(__file__).resolve().parent.parent / "tools" / "_icons"
+            cache_dir = get_app_root() / "tools" / "_icons"
         self.cache_dir = cache_dir
         self.cache_dir.mkdir(parents=True, exist_ok=True)
 

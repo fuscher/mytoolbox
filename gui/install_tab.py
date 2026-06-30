@@ -19,6 +19,7 @@ from core.installer import install_tool
 from core.models import CategoryInfo, ScanResult, ToolInfo
 from core.index_manager import IndexManager
 from core.icon_extractor import IconExtractor
+from core import get_app_root
 from .dialogs import CategoryManageDialog, _BatchCategorizeDialog
 from .theme import Theme, themed_listbox, themed_canvas
 
@@ -134,7 +135,7 @@ class InstallTab(ttk.Frame):
         self._canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
         # Batch action bar (hidden by default)
-        self._batch_frame = tk.Frame(right, bg=t.bg_panel, height=40)
+        self._batch_frame = tk.Frame(right, bg=t.bg_panel, height=60)
         self._batch_frame.pack(side=tk.BOTTOM, fill=tk.X)
         self._batch_frame.pack_forget()
         self._batch_frame.pack_propagate(False)
@@ -154,10 +155,54 @@ class InstallTab(ttk.Frame):
 
     def refresh(self) -> None:
         """Rescan tools/ and rebuild the UI."""
+        self._detect_orphaned_files()
+        self._rebuild_from_index()
+
+    def _rebuild_from_index(self) -> None:
+        """Rebuild UI from the current index (does not scan filesystem)."""
         self._scan = scan_tools(self.config)
         self._rebuild_cat_list()
         self._rebuild_cards()
         self._set_status("工具列表已刷新")
+
+    def _detect_orphaned_files(self) -> None:
+        """Find installer files in tools/ not yet tracked by the index.
+
+        Handles files copied manually while the app was not running.
+        Detected files are auto-imported or presented to the user.
+        """
+        tools_dir = self._resolve_tools_dir()
+        if not tools_dir.is_dir():
+            return
+
+        manager = IndexManager(tools_dir)
+        orphaned = []
+
+        for root, dirs, files in os.walk(tools_dir):
+            for f in files:
+                ext = Path(f).suffix.lower()
+                if ext not in _INSTALLER_EXTENSIONS:
+                    continue
+                full_path = Path(root) / f
+                rel_path = full_path.relative_to(tools_dir)
+                rel_str = str(rel_path).replace("\\", "/")
+                found = False
+                for tool in manager.get_all_tools():
+                    for installer in tool.get("installers", []):
+                        file_ref = installer.get("file", "")
+                        if file_ref == rel_str or file_ref.endswith("/" + f):
+                            found = True
+                            break
+                    if found:
+                        break
+                if not found:
+                    orphaned.append((full_path, rel_str))
+
+        if not orphaned:
+            return
+
+        self._import_files(orphaned)
+        self._set_status(f"已自动导入 {len(orphaned)} 个新安装包")
 
     # ── File watcher ──────────────────────────────────────────────────────
 
@@ -196,7 +241,7 @@ class InstallTab(ttk.Frame):
     def _resolve_tools_dir(self) -> Path:
         if self.config and "tools_dir" in self.config:
             return Path(self.config["tools_dir"]).resolve()
-        return Path(__file__).resolve().parent.parent / "tools"
+        return get_app_root() / "tools"
 
     def _on_file_created(self, file_path: str) -> None:
         if self._refresh_pending:
@@ -232,7 +277,7 @@ class InstallTab(ttk.Frame):
         if new_files:
             self.after(0, lambda: self._show_import_dialog(new_files))
         else:
-            self.refresh()
+            self._rebuild_from_index()
 
     def _show_import_dialog(self, new_files: List[tuple]) -> None:
         result = messagebox.askyesno(
@@ -277,7 +322,7 @@ class InstallTab(ttk.Frame):
                 self._set_status(f"已导入: {file_name}")
             except Exception as e:
                 self._set_status(f"导入失败: {file_name}")
-        self.refresh()
+        self._rebuild_from_index()
 
     def _import_installer(self) -> None:
         try:
@@ -337,7 +382,7 @@ class InstallTab(ttk.Frame):
                 self._set_status(f"已导入并添加: {file_name}")
             except Exception as e:
                 self._set_status(f"导入失败: {file_name}")
-        self.refresh()
+        self._rebuild_from_index()
 
     def _new_category(self) -> None:
         tools_dir = self._resolve_tools_dir()
@@ -653,7 +698,7 @@ class InstallTab(ttk.Frame):
 
         # ── Icon ─────────────────────────────────────────────────────
         icon_path = self._tool_icon_path(tool)
-        default_icon = Path(__file__).resolve().parent.parent / "resources" / "default_icon.png"
+        default_icon = get_app_root() / "resources" / "default_icon.png"
         is_default = icon_path == default_icon or not icon_path.exists()
 
         if is_default:
@@ -785,7 +830,7 @@ class InstallTab(ttk.Frame):
 
     def _tool_icon_path(self, tool: ToolInfo) -> Path:
         tools_dir = Path(self.config.get("tools_dir", "")).resolve() if self.config.get("tools_dir") \
-                    else Path(__file__).resolve().parent.parent / "tools"
+                    else get_app_root() / "tools"
         folder_path = tool.get("folder_path", "")
         if folder_path:
             icon = tools_dir / folder_path / "icon.png"
@@ -810,7 +855,7 @@ class InstallTab(ttk.Frame):
                 cached_icon = icon_cache_dir / f"{icon_name}.png"
                 if cached_icon.exists() and cached_icon.stat().st_size > 100:
                     return cached_icon
-        default = Path(__file__).resolve().parent.parent / "resources" / "default_icon.png"
+        default = get_app_root() / "resources" / "default_icon.png"
         return default if default.exists() else tools_dir / "icon.png"
 
     def _on_install(self, key: str, tool: ToolInfo, version_var: tk.IntVar) -> None:

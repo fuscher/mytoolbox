@@ -47,6 +47,7 @@ Desktop.ini
 
 # User-specific configuration
 installed.json
+tools/_icons/
 
 # Temporary files
 *.temp
