@@ -105,7 +105,8 @@ def _run_wmic(wmi_class: str, fields: str, where: str = "", use_path: bool = Fal
     else:
         args.extend([wmi_class, "get", fields])
     try:
-        r = subprocess.run(args, capture_output=True, text=True, timeout=10)
+        r = subprocess.run(args, capture_output=True, text=True, timeout=10,
+                           creationflags=subprocess.CREATE_NO_WINDOW)
         return r.stdout
     except Exception:
         return ""

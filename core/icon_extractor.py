@@ -335,7 +335,8 @@ extract_icon(r"{exe_path}", r"{output_path}")
             result = subprocess.run(
                 [sys.executable, "-c", script],
                 capture_output=True,
-                timeout=10
+                timeout=10,
+                creationflags=subprocess.CREATE_NO_WINDOW,
             )
             if result.returncode == 0 and output_path.exists():
                 return str(output_path)
